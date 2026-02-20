@@ -4,7 +4,7 @@ Exercise 3: COMPLETE SOLUTION
 1. Create database with Search module via API
 2. Semantic Router with 3 routes
 """
-
+#
 import requests
 import redis
 import time
