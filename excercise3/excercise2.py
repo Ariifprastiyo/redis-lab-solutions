@@ -1,144 +1,309 @@
 #!/usr/bin/env python3
 """
-Exercise 2: FIXED VERSION - Dengan debug role
+Exercise 2: Working with Redis REST API
+Dengan role sesuai soal: db_viewer, db_member, admin
 """
 
 import requests
+import json
 from requests.auth import HTTPBasicAuth
 import urllib3
-urllib3.disable_warnings()
+import sys
+from datetime import datetime
 
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ========================================================================
+# KONFIGURASI
+# ========================================================================
 API_BASE = "https://re-cluster1.ps-redislabs.org:9443"
 AUTH = HTTPBasicAuth("admin@rl.org", "5yxQH3o")
 HEADERS = {"Content-Type": "application/json"}
 
+# Users dengan role sesuai SOAL (bukan semua admin)
+USERS = [
+    {
+        "email": "john.doe@example.com",
+        "name": "John Doe",
+        "role": "db_viewer",        # Sesuai soal
+        "password": "TempPass123!"
+    },
+    {
+        "email": "mike.smith@example.com",
+        "name": "Mike Smith",
+        "role": "db_member",         # Sesuai soal
+        "password": "TempPass123!"
+    },
+    {
+        "email": "cary.johnson@example.com",
+        "name": "Cary Johnson",
+        "role": "admin",              # Sesuai soal
+        "password": "TempPass123!"
+    }
+]
+
+# Database yang akan dibuat
+DB_CONFIG = {
+    "name": "test-db-api",
+    "memory_size": 1073741824,  # 1GB
+    "port": 12002,
+    "shards_count": 1,
+    "sharding": True,
+    "replication": False,
+    "data_persistence": "disabled",
+    "shard_type": "redis",
+    "shards_placement": "dense",
+    "oss_cluster": False
+}
+
+# ========================================================================
+# FUNGSI-FUNGSI
+# ========================================================================
+
+def print_header(title):
+    print("\n" + "="*80)
+    print(f"  {title}")
+    print("="*80)
+
+def print_success(msg):
+    print(f"  ✅ {msg}")
+
+def print_error(msg):
+    print(f"  ❌ {msg}")
+
+def print_info(msg):
+    print(f"  ℹ️  {msg}")
+
+def test_connection():
+    """Test koneksi ke API"""
+    print_header("TESTING API CONNECTION")
+    
+    try:
+        response = requests.get(
+            f"{API_BASE}/v1/users",
+            auth=AUTH,
+            verify=False,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print_success(f"Connected to API")
+            print_info(f"Found {len(response.json())} users")
+            return True
+        else:
+            print_error(f"Failed: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print_error(f"Connection error: {e}")
+        return False
+
 def check_roles():
-    """Cek available roles"""
-    print("\n📋 Checking available roles...")
-    url = f"{API_BASE}/v1/roles"
-    response = requests.get(url, auth=AUTH, verify=False)
+    """Cek roles yang tersedia"""
+    print_header("CHECKING AVAILABLE ROLES")
+    
+    response = requests.get(f"{API_BASE}/v1/roles", auth=AUTH, verify=False)
     
     if response.status_code == 200:
         roles = response.json()
-        print(f"Found {len(roles)} roles:")
+        role_names = [role.get('name') for role in roles]
+        
+        print_info(f"Found {len(roles)} roles:")
         for role in roles:
-            print(f"  - {role.get('name')} (UID: {role.get('uid')})")
-        return [role.get('name') for role in roles]
+            print(f"     • {role.get('name')}")
+        
+        # Verifikasi role yang kita butuhkan
+        required_roles = ['db_viewer', 'db_member', 'admin']
+        print_info("\nChecking required roles:")
+        for req_role in required_roles:
+            if req_role in role_names:
+                print_success(f"{req_role} available")
+            else:
+                print_error(f"{req_role} NOT available")
+        
+        return role_names
     else:
-        print(f"❌ Failed to get roles: {response.status_code}")
+        print_error(f"Failed to get roles: {response.status_code}")
         return []
 
-def delete_existing_users():
-    """Delete users if they already exist"""
-    print("\n🗑️  Checking for existing users...")
-    url = f"{API_BASE}/v1/users"
-    response = requests.get(url, auth=AUTH, verify=False)
+def create_database():
+    """Create database"""
+    print_header("CREATING DATABASE")
     
-    if response.status_code == 200:
-        users = response.json()
-        target_emails = [
-            "john.doe@example.com",
-            "mike.smith@example.com", 
-            "cary.johnson@example.com"
-        ]
-        
-        for user in users:
-            if user.get('email') in target_emails:
-                uid = user.get('uid')
-                del_resp = requests.delete(f"{API_BASE}/v1/users/{uid}", 
-                                          auth=AUTH, verify=False)
-                print(f"  Deleted: {user.get('email')} - {del_resp.status_code}")
-
-def create_user(email, name, role_name):
-    """Create a user with specified role"""
-    print(f"\n👤 Creating: {email} - Role: {role_name}")
-    
-    user_data = {
-        "email": email,
-        "name": name,
-        "role": role_name,
-        "password": "TempPass123!"
-    }
-    
-    response = requests.post(f"{API_BASE}/v1/users", 
-                            auth=AUTH, 
-                            headers=HEADERS,
-                            json=user_data, 
-                            verify=False)
+    response = requests.post(
+        f"{API_BASE}/v1/bdbs",
+        auth=AUTH,
+        headers=HEADERS,
+        json=DB_CONFIG,
+        verify=False
+    )
     
     if response.status_code in [200, 201]:
-        print(f"  ✅ SUCCESS")
-        return True
+        db_info = response.json()
+        db_uid = db_info.get('uid')
+        print_success(f"Database created! UID: {db_uid}")
+        return db_uid
+    elif response.status_code == 409:
+        print_info("Database already exists")
+        # Cari UID database yang ada
+        list_resp = requests.get(f"{API_BASE}/v1/bdbs", auth=AUTH, verify=False)
+        for db in list_resp.json():
+            if db.get('name') == DB_CONFIG['name']:
+                return db.get('uid')
     else:
-        print(f"  ❌ FAILED: {response.status_code}")
-        print(f"     Response: {response.text}")
-        return False
+        print_error(f"Failed: {response.status_code}")
+        return None
 
-def list_users():
-    """List all users"""
+def delete_existing_users():
+    """Delete users if they exist"""
+    print_header("CLEANING UP EXISTING USERS")
+    
+    target_emails = [user["email"] for user in USERS]
+    
     response = requests.get(f"{API_BASE}/v1/users", auth=AUTH, verify=False)
     
     if response.status_code == 200:
         users = response.json()
-        print("\n" + "="*70)
-        print("ALL USERS:")
-        print("="*70)
-        print(f"{'Name':<25} {'Role':<20} {'Email':<30}")
-        print("-"*75)
+        deleted = 0
         
         for user in users:
+            if user.get('email') in target_emails:
+                uid = user.get('uid')
+                del_resp = requests.delete(
+                    f"{API_BASE}/v1/users/{uid}",
+                    auth=AUTH,
+                    verify=False
+                )
+                if del_resp.status_code == 200:
+                    print_success(f"Deleted {user.get('email')}")
+                    deleted += 1
+        
+        if deleted == 0:
+            print_info("No existing users to delete")
+        else:
+            print_success(f"Deleted {deleted} users")
+
+def create_user(user):
+    """Create user dengan role sesuai soal"""
+    print(f"\n📝 Creating: {user['email']}")
+    print(f"   Name: {user['name']}")
+    print(f"   Role: {user['role']}")
+    
+    response = requests.post(
+        f"{API_BASE}/v1/users",
+        auth=AUTH,
+        headers=HEADERS,
+        json=user,
+        verify=False
+    )
+    
+    if response.status_code in [200, 201]:
+        print_success(f"Created {user['email']}")
+        return True
+    elif response.status_code == 409:
+        print_info(f"{user['email']} already exists")
+        return True
+    else:
+        print_error(f"Failed: HTTP {response.status_code}")
+        print_info(f"Response: {response.text}")
+        return False
+
+def list_users():
+    """List all users"""
+    print_header("LISTING ALL USERS")
+    
+    response = requests.get(f"{API_BASE}/v1/users", auth=AUTH, verify=False)
+    
+    if response.status_code == 200:
+        users = response.json()
+        
+        print(f"\n{'Name':<25} {'Role':<20} {'Email':<30}")
+        print("-" * 75)
+        
+        for user in sorted(users, key=lambda x: x.get('email', '')):
             name = user.get('name', 'N/A')[:24]
             role = user.get('role', 'N/A')[:19]
             email = user.get('email', 'N/A')[:29]
             print(f"{name:<25} {role:<20} {email:<30}")
+        
+        print("-" * 75)
+        print(f"Total: {len(users)} users")
+        
+        # Verifikasi target users
+        print_header("VERIFICATION")
+        for target in USERS:
+            found = False
+            for user in users:
+                if user.get('email') == target['email']:
+                    print_success(f"{target['email']} - Role: {user.get('role')}")
+                    found = True
+                    break
+            if not found:
+                print_error(f"{target['email']} - NOT FOUND")
+        
         return users
-    return []
+    else:
+        print_error(f"Failed to list users: {response.status_code}")
+        return []
 
-def main():
-    print("="*70)
-    print("EXERCISE 2: FIXED VERSION")
-    print("="*70)
-    
-    # Step 1: Check available roles
-    available_roles = check_roles()
-    
-    if not available_roles:
-        print("\n❌ Tidak bisa mendapatkan roles. Cek koneksi API.")
+def delete_database(db_uid):
+    """Delete database"""
+    if not db_uid:
         return
     
-    # Step 2: Tentukan role yang akan digunakan
-    # Coba cari role yang mengandung kata "admin" (case insensitive)
-    admin_role = None
-    for role in available_roles:
-        if 'admin' in role.lower():
-            admin_role = role
-            break
+    print_header("DELETING DATABASE")
     
-    if not admin_role:
-        print("\n❌ Tidak menemukan role admin. Gunakan role pertama:")
-        admin_role = available_roles[0]
+    response = requests.delete(
+        f"{API_BASE}/v1/bdbs/{db_uid}",
+        auth=AUTH,
+        verify=False
+    )
     
-    print(f"\n✅ Menggunakan role: '{admin_role}'")
+    if response.status_code == 200:
+        print_success("Database deleted")
+    else:
+        print_error(f"Failed to delete: {response.status_code}")
+
+# ========================================================================
+# MAIN
+# ========================================================================
+
+def main():
+    print("="*80)
+    print("  EXERCISE 2: Redis REST API")
+    print("  Dengan role: db_viewer, db_member, admin")
+    print("="*80)
     
-    # Step 3: Delete existing users
+    # Test connection
+    if not test_connection():
+        return
+    
+    # Check roles
+    available_roles = check_roles()
+    
+    # Create database
+    db_uid = create_database()
+    
+    # Clean up existing users
     delete_existing_users()
     
-    # Step 4: Create users with the detected role
-    users_to_create = [
-        ("john.doe@example.com", "John Doe"),
-        ("mike.smith@example.com", "Mike Smith"),
-        ("cary.johnson@example.com", "Cary Johnson")
-    ]
+    # Create users with correct roles
+    print_header("CREATING THREE USERS (sesuai soal)")
+    for user in USERS:
+        create_user(user)
     
-    for email, name in users_to_create:
-        create_user(email, name, admin_role)
-    
-    # Step 5: List all users
+    # List and verify
     list_users()
     
-    print("\n" + "="*70)
-    print("✅ EXERCISE 2 COMPLETE")
-    print("="*70)
+    # Delete database
+    delete_database(db_uid)
+    
+    print_header("EXERCISE 2 COMPLETED")
+    print_success("Database created and deleted")
+    print_success("Three users created with correct roles:")
+    for user in USERS:
+        print(f"    • {user['email']} - {user['role']}")
+    print_success("All users listed and verified")
 
 if __name__ == "__main__":
     main()
