@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Exercise 2: Berdasarkan UI Redis Enterprise
+Exercise 2: FIXED - Dengan format role yang benar dari curl
 """
 
 import requests
@@ -20,15 +20,18 @@ def print_header(title):
     print("="*80)
 
 def create_role(role_name):
-    """Create role"""
+    """Create role dengan format yang benar dari curl"""
     print(f"\n📝 Creating role: {role_name}")
     
+    # FORMAT YANG BENAR - berdasarkan response curl
     role_data = {
         "name": role_name,
-        "management": "regular"
+        "management": role_name  # management = nama role
     }
     
-    resp = requests.post(
+    print(f"  Request: {role_data}")
+    
+    response = requests.post(
         f"{API_BASE}/v1/roles",
         auth=AUTH,
         headers=HEADERS,
@@ -36,25 +39,62 @@ def create_role(role_name):
         verify=False
     )
     
-    if resp.status_code in [200, 201]:
+    if response.status_code in [200, 201]:
         print(f"  ✅ Role '{role_name}' created")
         return True
-    elif resp.status_code == 409:
+    elif response.status_code == 409:
         print(f"  ℹ️  Role '{role_name}' already exists")
         return True
     else:
-        print(f"  ❌ Failed: {resp.status_code}")
+        print(f"  ❌ Failed: {response.status_code}")
+        print(f"     Response: {response.text}")
+        return False
+
+def create_user(email, name, role):
+    """Create user"""
+    print(f"\n👤 Creating: {email} - Role: {role}")
+    
+    # Cek dulu apakah user sudah ada
+    resp = requests.get(f"{API_BASE}/v1/users", auth=AUTH, verify=False)
+    for user in resp.json():
+        if user.get('email') == email:
+            uid = user.get('uid')
+            requests.delete(f"{API_BASE}/v1/users/{uid}", auth=AUTH, verify=False)
+            print(f"  🗑️  Deleted existing {email}")
+            break
+    
+    user_data = {
+        "email": email,
+        "name": name,
+        "role": role,
+        "password": "TempPass123!"
+    }
+    
+    response = requests.post(
+        f"{API_BASE}/v1/users",
+        auth=AUTH,
+        headers=HEADERS,
+        json=user_data,
+        verify=False
+    )
+    
+    if response.status_code in [200, 201]:
+        print(f"  ✅ User created")
+        return True
+    else:
+        print(f"  ❌ Failed: {response.status_code}")
+        print(f"     Response: {response.text}")
         return False
 
 def list_roles():
     """List all roles"""
-    resp = requests.get(f"{API_BASE}/v1/roles", auth=AUTH, verify=False)
+    response = requests.get(f"{API_BASE}/v1/roles", auth=AUTH, verify=False)
     
-    if resp.status_code == 200:
-        roles = resp.json()
+    if response.status_code == 200:
+        roles = response.json()
         print(f"\n📋 Available roles ({len(roles)}):")
         for role in roles:
-            print(f"  • {role.get('name')}")
+            print(f"  • {role.get('name')} (management: {role.get('management')})")
         return roles
     return []
 
@@ -69,7 +109,7 @@ def create_database():
         "shards_count": 1
     }
     
-    resp = requests.post(
+    response = requests.post(
         f"{API_BASE}/v1/bdbs",
         auth=AUTH,
         headers=HEADERS,
@@ -77,59 +117,30 @@ def create_database():
         verify=False
     )
     
-    if resp.status_code in [200, 201]:
-        db_uid = resp.json().get('uid')
+    if response.status_code in [200, 201]:
+        db_uid = response.json().get('uid')
         print(f"  ✅ Database created (UID: {db_uid})")
         return db_uid
-    elif resp.status_code == 409:
+    elif response.status_code == 409:
         print(f"  ℹ️  Database already exists")
-        # Get existing UID
         list_resp = requests.get(f"{API_BASE}/v1/bdbs", auth=AUTH, verify=False)
         for db in list_resp.json():
             if db.get('name') == "test-db-api":
-                return db.get('uid')
+                uid = db.get('uid')
+                print(f"  ℹ️  Using existing database UID: {uid}")
+                return uid
     else:
-        print(f"  ❌ Failed: {resp.status_code}")
+        print(f"  ❌ Failed: {response.status_code}")
         return None
-
-def create_user(email, name, role):
-    """Create user"""
-    print(f"\n👤 Creating: {email} - Role: {role}")
-    
-    user_data = {
-        "email": email,
-        "name": name,
-        "role": role,
-        "password": "TempPass123!"
-    }
-    
-    resp = requests.post(
-        f"{API_BASE}/v1/users",
-        auth=AUTH,
-        headers=HEADERS,
-        json=user_data,
-        verify=False
-    )
-    
-    if resp.status_code in [200, 201]:
-        print(f"  ✅ User created")
-        return True
-    elif resp.status_code == 409:
-        print(f"  ℹ️  User already exists")
-        return True
-    else:
-        print(f"  ❌ Failed: {resp.status_code}")
-        print(f"     {resp.text}")
-        return False
 
 def list_users():
     """List users"""
     print_header("LISTING ALL USERS")
     
-    resp = requests.get(f"{API_BASE}/v1/users", auth=AUTH, verify=False)
+    response = requests.get(f"{API_BASE}/v1/users", auth=AUTH, verify=False)
     
-    if resp.status_code == 200:
-        users = resp.json()
+    if response.status_code == 200:
+        users = response.json()
         print(f"\n{'Name':<25} {'Role':<20} {'Email':<30}")
         print("-" * 75)
         
@@ -143,7 +154,7 @@ def list_users():
         print(f"Total: {len(users)} users")
         return users
     else:
-        print(f"  ❌ Failed: {resp.status_code}")
+        print(f"  ❌ Failed: {response.status_code}")
         return []
 
 def delete_database(db_uid):
@@ -153,47 +164,39 @@ def delete_database(db_uid):
     if not db_uid:
         return
     
-    resp = requests.delete(
+    response = requests.delete(
         f"{API_BASE}/v1/bdbs/{db_uid}",
         auth=AUTH,
         verify=False
     )
     
-    if resp.status_code == 200:
+    if response.status_code == 200:
         print(f"  ✅ Database deleted")
     else:
-        print(f"  ❌ Failed: {resp.status_code}")
+        print(f"  ❌ Failed: {response.status_code}")
 
 def main():
     print("="*80)
-    print("  EXERCISE 2: BERDASARKAN UI REDIS")
+    print("  EXERCISE 2: FIXED - Format role dari curl")
     print("="*80)
     
-    # Test connection
-    try:
-        requests.get(f"{API_BASE}/v1/users", auth=AUTH, verify=False, timeout=5)
-        print("\n✅ Connected to API")
-    except Exception as e:
-        print(f"\n❌ Cannot connect: {e}")
-        return
-    
-    # STEP 0: Lihat roles yang ada
+    # STEP 1: Lihat roles yang ada
     print_header("CURRENT ROLES")
     list_roles()
     
-    # STEP 1: Create roles yang diperlukan
+    # STEP 2: Create roles dengan format yang benar
     print_header("CREATING REQUIRED ROLES")
     create_role("db_viewer")
     create_role("db_member")
     
-    # STEP 2: Lihat roles setelah dibuat
+    # STEP 3: Lihat roles setelah dibuat
     print_header("UPDATED ROLES")
     list_roles()
     
-    # STEP 3: Create database
+    # STEP 4: Create database
     db_uid = create_database()
     
-    # STEP 4: Create users sesuai soal
+    # STEP 5: Create users sesuai soal
     print_header("CREATING USERS")
     
     users = [
@@ -205,10 +208,10 @@ def main():
     for email, name, role in users:
         create_user(email, name, role)
     
-    # STEP 5: List users
+    # STEP 6: List users
     list_users()
     
-    # STEP 6: Delete database
+    # STEP 7: Delete database
     delete_database(db_uid)
     
     print_header("EXERCISE 2 COMPLETED")
